@@ -13,7 +13,14 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: [
+    "http://localhost:5173",
+    "https://stunning-haupia-b750ab.netlify.app",
+    "https://glistening-daifuku-af446f.netlify.app",
+    process.env.FRONTEND_URL,
+    /\.vercel\.app$/,
+    /\.netlify\.app$/,
+  ].filter(Boolean),
   methods: ["GET", "POST"],
   allowedHeaders: ["Content-Type"],
 }));
