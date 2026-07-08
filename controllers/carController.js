@@ -1,4 +1,6 @@
 const Car = require("../models/Car");
+const { getLivePrice } = require("../utils/pricing");
+const { parseSearchQuery } = require("../utils/searchParser");
 
 // @desc   Search cars based on natural-language-like filters
 // @route  POST /api/cars/search
@@ -10,66 +12,26 @@ const searchCars = async (req, res) => {
       return res.status(400).json({ message: "Search query is required." });
     }
 
-    const lowerQuery = query.toLowerCase();
-    const filter = {};
+    const { filter, sort } = parseSearchQuery(query);
 
-    // --- Price extraction ---
-    // Matches patterns like "under 15 lakhs", "below 10 lakh", "less than 20 lakhs"
-    const priceMatch = lowerQuery.match(
-      /(?:under|below|less than|within|upto|up to)\s*(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|l)?/
-    );
-    if (priceMatch) {
-      filter.price = { $lte: parseFloat(priceMatch[1]) };
-    }
-
-    // --- Car type extraction ---
-    const types = ["suv", "sedan", "hatchback", "muv", "coupe", "convertible", "truck"];
-    for (const type of types) {
-      if (lowerQuery.includes(type)) {
-        filter.type = { $regex: new RegExp(`^${type}$`, "i") };
-        break;
-      }
-    }
-
-    // --- Fuel type extraction ---
-    const fuelTypes = ["petrol", "diesel", "electric", "hybrid", "cng"];
-    for (const fuel of fuelTypes) {
-      if (lowerQuery.includes(fuel)) {
-        filter.fuelType = { $regex: new RegExp(`^${fuel}$`, "i") };
-        break;
-      }
-    }
-
-    // --- Brand extraction ---
-    const brands = [
-      "hyundai", "maruti", "tata", "mahindra", "toyota",
-      "honda", "kia", "ford", "volkswagen", "skoda", "mg",
-    ];
-    for (const brand of brands) {
-      if (lowerQuery.includes(brand)) {
-        filter.brand = { $regex: new RegExp(brand, "i") };
-        break;
-      }
-    }
-
-    // --- Seats extraction ---
-    const seatsMatch = lowerQuery.match(/(\d+)\s*(?:seat|seater|seats)/);
-    if (seatsMatch) {
-      filter.seats = parseInt(seatsMatch[1]);
-    }
-
-    // --- Family / 7-seater keyword ---
-    if (lowerQuery.includes("family") || lowerQuery.includes("7 seat") || lowerQuery.includes("seven seat")) {
-      filter.seats = 7;
-    }
-
-    const cars = await Car.find(filter).sort({ rating: -1 });
+    let cars = await Car.find(filter).sort(sort.rating || sort.mileage ? sort : { rating: -1 });
 
     if (cars.length === 0) {
       return res.status(404).json({ message: "No cars found matching your requirements." });
     }
 
-    res.status(200).json({ count: cars.length, cars });
+    const carsWithPricing = await Promise.all(
+      cars.map(async (car) => {
+        const pricing = await getLivePrice(car, car.price);
+        return {
+          ...car.toObject(),
+          price: pricing.price,
+          priceSource: pricing.source,
+        };
+      })
+    );
+
+    res.status(200).json({ count: carsWithPricing.length, cars: carsWithPricing });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error. Please try again." });
@@ -176,15 +138,21 @@ const recommendCars = async (req, res) => {
     const top3 = scored.slice(0, 3);
 
     // Generate a human-readable explanation for each
-    const results = top3.map(({ car, score, breakdown }, index) => {
+    const results = await Promise.all(top3.map(async ({ car, score, breakdown }, index) => {
       const rank = index + 1;
       const reasons = [];
+      const pricing = await getLivePrice(car, car.price);
+      const pricedCar = {
+        ...car.toObject(),
+        price: pricing.price,
+        priceSource: pricing.source,
+      };
 
-      if (budget && car.price <= parseFloat(budget)) {
-        const savings = (parseFloat(budget) - car.price).toFixed(1);
+      if (budget && pricedCar.price <= parseFloat(budget)) {
+        const savings = (parseFloat(budget) - pricedCar.price).toFixed(1);
         reasons.push(`fits your ₹${budget}L budget with ₹${savings}L to spare`);
       } else if (!budget) {
-        reasons.push(`is priced at ₹${car.price}L`);
+        reasons.push(`is priced at ₹${pricedCar.price}L`);
       }
       if (familySize && car.seats >= parseInt(familySize)) {
         reasons.push(`comfortably seats ${car.seats} people`);
@@ -207,11 +175,11 @@ const recommendCars = async (req, res) => {
       return {
         rank,
         score,
-        car,
+        car: pricedCar,
         breakdown,
         explanation,
       };
-    });
+    }));
 
     res.status(200).json({ results });
   } catch (error) {
