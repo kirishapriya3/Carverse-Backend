@@ -1,4 +1,5 @@
 const Car = require("../models/Car");
+const SearchHistory = require("../models/SearchHistory");
 const { getLivePrice } = require("../utils/pricing");
 const { parseSearchQuery } = require("../utils/searchParser");
 
@@ -15,6 +16,10 @@ const searchCars = async (req, res) => {
     const { filter, sort } = parseSearchQuery(query);
 
     let cars = await Car.find(filter).sort(sort.rating || sort.mileage ? sort : { rating: -1 });
+
+    if (req.user?._id) {
+      await SearchHistory.create({ user: req.user._id, query });
+    }
 
     if (cars.length === 0) {
       return res.status(404).json({ message: "No cars found matching your requirements." });
