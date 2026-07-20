@@ -18,7 +18,7 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: [
-    "http://localhost:5173",
+    // "http://localhost:5173",
     "http://localhost:5174",
     "https://stunning-haupia-b750ab.netlify.app",
     "https://glistening-daifuku-af446f.netlify.app",
